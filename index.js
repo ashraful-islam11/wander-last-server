@@ -3,6 +3,7 @@ import express from 'express'
 import { Collection, MongoClient, ObjectId } from 'mongodb';
 import 'dotenv/config'
 import cors from 'cors'
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 
  const app = express() ;
@@ -30,14 +31,45 @@ export async function connectToMongoDB() {
   const mongoClient = await connectToMongoDB()
   const db = mongoClient.db('wanderlast');  // create database 
   const destinationCollection = db.collection('destination')  // collection .
-  
+  const bookingCollection = db.collection('bookings');  // collection . 
 
+  //* middleware 
+    const verifyToken  = async (req, res, next ) =>{
+
+    const authHeader  = req.headers.authorization ;
+    // console.log(authHeader);
+
+    if(!authHeader ){
+         return res.status(401).send({msg: 'Unauthorized!'}) ;
+    }
+    const token =  authHeader.split(" ")[1] ;
+    if(!token){
+      return res.status(401).send({msg: 'Unauthorized!'})
+    }
+   
+
+    // verify part : 
+    const JWKS = createRemoteJWKSet( new URL('http://localhost:3000/api/auth/jwks')) ;
+
+
+    
+    try {
+          const {payload} = await jwtVerify(token, JWKS) ;
+          console.log(payload);
+          next()
+    } catch (error) {
+      res.status(500).send({msg: 'Server Error!'})
+    }
+
+
+
+}
 
  app.get( ('/'),(req, res)=> {
     res.send({message: 'server is running !'})
  })
 
-app.post(('/add-destination'), async (req, res)=> {
+app.post(('/add-destination'), verifyToken,  async (req, res)=> {
  
     const data = req.body ;
 
@@ -55,13 +87,20 @@ app.get(('/destination'),async(req, res)=> {
         res.send(result);
 })
 
-app.get(('/destination/:id'), async (req, res)=> {
-     const id = req.params ;
+
+app.get('/featured-destination', async (req, res)=> {
+    const result = await destinationCollection.find().limit(5).toArray() ;
+    res.send(result) ;
+})
+
+app.get(('/destination/:id'), verifyToken, async (req, res)=> {
+
+    const id = req.params ;
     const destinationResult = await destinationCollection.findOne({_id: new ObjectId(id)})
      res.send(destinationResult)
 })
 
-app.patch('/destination/:id',async (req, res)=> {
+app.patch('/destination/:id', verifyToken, async (req, res)=> {
    const {id} =  req.params ;
    const updatedData =  req.body; 
   const result = await destinationCollection.updateOne(
@@ -73,7 +112,7 @@ app.patch('/destination/:id',async (req, res)=> {
 
 })
 
-app.delete('/destination/:id', async (req, res)=> {
+app.delete('/destination/:id', verifyToken,  async (req, res)=> {
     const {id} = req.params ;
     const result = await destinationCollection.deleteOne({_id: new ObjectId(id)}) ;
     res.json(result);
@@ -81,6 +120,29 @@ app.delete('/destination/:id', async (req, res)=> {
 
 })
 
+
+app.post('/bookingDestination' , verifyToken, async(req, res)=> {
+        const data = req.body;
+        const result = await bookingCollection.insertOne(data) ;
+        res.send(result)
+})
+
+// my booking api : 
+
+app.get('/my-booking/:email' , verifyToken,   async (req, res)=> {
+     const {email} =  req.params ;
+     const result = await bookingCollection.find({userEmail: email}).toArray() ;
+     res.send(result)
+
+})
+
+app.delete('/my-booking-cancel/:id', verifyToken,  async (req, res)=> {
+
+    const {id} = req.params ;
+    const result = await bookingCollection.deleteOne({_id : id});
+   
+    res.send(result)
+})
 
 
  app.listen( PORT, ()=> {
